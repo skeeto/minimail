@@ -11,7 +11,7 @@ void pop3_handler(FILE *client, void *arg)
 }
 
 #define RESPOND(client, format, args...)        \
-    fprintf(client, format "\r\n", args);
+    fprintf(client, format "\r\n", args)
 
 void pop3(FILE *client, const char *dbfile)
 {
@@ -28,6 +28,7 @@ void pop3(FILE *client, const char *dbfile)
     struct message *messages = NULL;
     while (!feof(client)) {
         char line[512];
+        printf("%s", line);
         fgets(line, sizeof(line), client);
         char command[5] = {line[0], line[1], line[2], line[3]};
 
@@ -58,21 +59,52 @@ void pop3(FILE *client, const char *dbfile)
             RESPOND(client, "%s", ".");
         } else if (strcmp(command, "RETR") == 0) {
             int id = atoi(line + 4);
+            int found = 0;
             for (struct message *m = messages; m; m = m->next)
-                if (m->id == id)
+                if (m->id == id) {
+                    found = 1;
+                    RESPOND(client, "%s", "+OK");
                     RESPOND(client, "%s", m->content);
-            RESPOND(client, "%s", ".");
+                }
+            RESPOND(client, "%s", found ? "." : "-ERR");
         } else if (strcmp(command, "DELE") == 0) {
             int id = atoi(line + 4);
-            struct message **last = &messages;
+            int found = 0;
             for (struct message *m = messages; m; m = m->next) {
                 if (m->id == id) {
-                    *last = m->next;
+                    RESPOND(client, "%s", "+OK");
                     database_delete(&db, id);
-                    free(m);
+                    break;
                 }
-                *last = m->next;
             }
+            if (!found)
+                RESPOND(client, "%s", "-ERR");
+        } else if (strcmp(command, "TOP ") == 0) {
+            int id, lines;
+            sscanf(line, "TOP %d %d", &id, &lines);
+            int found = 0;
+            for (struct message *m = messages; m; m = m->next) {
+                if (m->id == id) {
+                    RESPOND(client, "%s", "+OK");
+                    found = 1;
+                    char *p = m->content;
+                    while (*p && memcmp(p, "\r\n\r\n", 4) != 0) {
+                        fputc(*p, client);
+                        p++;
+                    }
+                    if (*p) {
+                        p += 4;
+                        int line = 0;
+                        while (*p && line < lines) {
+                            if (*p == '\n')
+                                line++;
+                            p++;
+                        }
+                    }
+                    break;
+                }
+            }
+            RESPOND(client, "%s", found ? "\r\n." : "-ERR");
         } else if (strcmp(command, "QUIT") == 0) {
             RESPOND(client, "%s", "+OK");
             break;
